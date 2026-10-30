@@ -1,0 +1,62 @@
+# Local development: http://localhost:8080
+# web (nginx) serves public/ and proxies /api/ to app (Spring Boot), which talks to db (MariaDB).
+# Only web publishes a port; app and db stay on the compose network. Secrets come from .env (see .env.example).
+# public/ and the nginx config are mounted read-only, so front-end edits show up without a rebuild.
+services:
+  web:
+    build:
+      context: ./public
+      dockerfile: ../docker/nginx/Dockerfile
+    image: myapp-web:${APP_VERSION:-dev}
+    ports:
+      - "8080:80"
+    volumes:
+      - ./public:/usr/share/nginx/html:ro
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./docker/nginx/site.inc:/etc/nginx/snippets/site.inc:ro
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETUID, SETGID, NET_BIND_SERVICE]   # nginx master binds :80 and drops to its worker user
+    mem_limit: 256m
+    restart: unless-stopped
+
+  app:
+    build:
+      context: ./backend
+      dockerfile: ../docker/backend/Dockerfile
+    image: myapp-app:${APP_VERSION:-dev}
+    env_file: .env
+    environment:
+      DB_URL: jdbc:mariadb://db:3306/app
+      DB_USER: app
+      COOKIE_SECURE: "false"          # local is plain http
+    depends_on:
+      db:
+        condition: service_healthy
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    mem_limit: 1g                      # the JVM takes 75% of this (MaxRAMPercentage in the Dockerfile)
+    restart: unless-stopped
+
+  db:
+    image: mariadb:11.4
+    environment:
+      MARIADB_DATABASE: app
+      MARIADB_USER: app
+      MARIADB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?set DB_ROOT_PASSWORD in .env}
+      MARIADB_ROOT_HOST: localhost     # root only from inside the db container
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    volumes:
+      - dbdata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 768m
+    restart: unless-stopped
+
+volumes:
+  dbdata:

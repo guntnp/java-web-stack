@@ -1,0 +1,38 @@
+spring:
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+  flyway:
+    locations: classpath:db/migration
+
+server:
+  port: 8080
+  # Trust X-Forwarded-For/-Proto from nginx (Tomcat only accepts them from private-network addresses).
+  forward-headers-strategy: native
+  error:
+    include-stacktrace: never
+    include-message: never
+  servlet:
+    session:
+      timeout: 8h
+      cookie:
+        name: SID
+        http-only: true
+        secure: ${COOKIE_SECURE:true}
+        same-site: lax
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+
+app:
+  admin:
+    # The first admin, created at startup when no admin exists yet. Leave empty to skip.
+    email: ${ADMIN_EMAIL:}
+    password: ${ADMIN_PASSWORD:}

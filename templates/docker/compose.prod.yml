@@ -1,0 +1,72 @@
+# Production behind a Cloudflare Tunnel: no port is published on the server at all.
+# cloudflared dials out to Cloudflare; in the Cloudflare dashboard the tunnel's public hostname points to http://web:80.
+# From the repo root (the .env there is NOT found without --env-file, because this file lives in docker/):
+#   APP_VERSION=$(git rev-parse --short HEAD) docker compose --env-file .env -f docker/compose.prod.yml up -d --build
+# Roll back to an older build (no --build, so the old image is reused):
+#   APP_VERSION=<old-tag> docker compose --env-file .env -f docker/compose.prod.yml up -d
+services:
+  tunnel:
+    image: cloudflare/cloudflared:latest   # pin a version tag after your first deploy
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN in .env}
+    depends_on: [web]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    mem_limit: 128m
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ../public
+      dockerfile: ../docker/nginx/Dockerfile
+    image: myapp-web:${APP_VERSION:?set APP_VERSION, e.g. the git commit}
+    volumes:
+      - ./nginx/prod.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/site.inc:/etc/nginx/snippets/site.inc:ro
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETUID, SETGID, NET_BIND_SERVICE]
+    mem_limit: 256m
+    restart: unless-stopped
+
+  app:
+    build:
+      context: ../backend
+      dockerfile: ../docker/backend/Dockerfile
+    image: myapp-app:${APP_VERSION:?set APP_VERSION, e.g. the git commit}
+    env_file: ../.env
+    environment:
+      DB_URL: jdbc:mariadb://db:3306/app
+      DB_USER: app
+      COOKIE_SECURE: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    mem_limit: 1g
+    restart: unless-stopped
+
+  db:
+    image: mariadb:11.4
+    environment:
+      MARIADB_DATABASE: app
+      MARIADB_USER: app
+      MARIADB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?set DB_ROOT_PASSWORD in .env}
+      MARIADB_ROOT_HOST: localhost
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    volumes:
+      - dbdata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 768m
+    restart: unless-stopped
+
+volumes:
+  dbdata:

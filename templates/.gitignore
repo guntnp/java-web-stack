@@ -1,0 +1,6 @@
+.env
+*.sql.gz
+backup-*.sql
+backend/target/
+.idea/
+.vscode/
